@@ -18,6 +18,12 @@ class AppUpdateRepository {
 
   static Future<void> checkUpdate(BuildContext context, {bool canIgnore = true, bool showToast = false}) async {
     try {
+
+      if (AppConfiguration.version.contains("+")) {
+        logger.i("[AppUpdate] Skipping update check for git-hash build: ${AppConfiguration.version}");
+        return;
+      }
+
       var lastVersion = await getLatestVersion();
       if (lastVersion == null) {
         logger.w("[AppUpdate] failed to fetch latest version info");

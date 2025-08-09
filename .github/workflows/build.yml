@@ -1,0 +1,178 @@
+name: Build App
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Enable Flutter Windows Desktop Support
+        run: flutter config --enable-windows-desktop
+
+      - name: Install Flutter Dependencies
+        run: flutter pub get
+
+      - name: Prepare Inno Setup Language Files
+        shell: pwsh
+        run: |
+          git clone --depth 1 https://github.com/jrsoftware/issrc.git is-src
+
+          $langDir = "C:\Program Files (x86)\Inno Setup 6\Languages"
+          if (-not (Test-Path $langDir)) {
+              New-Item -ItemType Directory -Path $langDir -Force | Out-Null
+          }
+
+          Get-ChildItem -Path "is-src/Files/Languages","is-src/Files/Languages/Unofficial" -Filter *.isl -Recurse |
+          ForEach-Object {
+              Write-Host "Copying $($_.Name) to $langDir"
+              Copy-Item -Path $_.FullName -Destination $langDir -Force
+          }
+
+          Remove-Item -Path "is-src" -Recurse -Force
+
+      - name: Update Version in pubspec.yaml And configuration.dart with Git Hash
+        shell: pwsh
+        run: |
+          $gitHash = git rev-parse --short=7 HEAD
+          Write-Host "Using Git hash: $gitHash"
+
+          $pubspecPath = "./pubspec.yaml"
+          $dartFilePath = "./lib/ui/configuration.dart"
+
+          # Update pubspec.yaml
+          $oldVersionLine = (Get-Content $pubspecPath | Select-String '^version:').Line
+          if (-not $oldVersionLine) { throw "No version line found in pubspec.yaml" }
+          $oldVersion = $oldVersionLine -replace '^version:\s*', ''
+          Write-Host "Old pubspec version: $oldVersion"
+
+          $pubspecContent = Get-Content $pubspecPath | ForEach-Object {
+              if ($_ -match '^(version:\s*\d+\.\d+\.\d+(-[A-Za-z0-9]+)?\+)\w+$') {
+                  $_ -replace '(?<=\+)\w+$', $gitHash
+              } else { $_ }
+          }
+
+          $updatedVersionLine = ($pubspecContent | Select-String '^version:').Line
+          $updatedVersion = $updatedVersionLine -replace '^version:\s*', ''
+          $baseVersion = $updatedVersion -replace '\+.*', ''
+
+          Set-Content -Encoding UTF8 $pubspecPath $pubspecContent
+          Write-Host "Updated pubspec version: $updatedVersion"
+
+          # Update Dart configuration.dart
+          $dartContent = Get-Content $dartFilePath | ForEach-Object {
+              if ($_ -match 'static const String version = ".*";') {
+                  "static const String version = `"$baseVersion+$gitHash`";"
+              } else { $_ }
+          }
+
+          Set-Content -Encoding UTF8 $dartFilePath $dartContent
+          Write-Host "Updated Dart version: $baseVersion+$gitHash"
+
+      - name: Activate FastForge
+        run: dart pub global activate fastforge
+
+      - name: Build Windows
+        shell: pwsh
+        run: |
+          flutter build windows --release
+
+          $releasePath = Get-ChildItem build/windows -Recurse -Directory -Filter Release |
+                         Where-Object { Test-Path "$($_.FullName)/*.exe" } |
+                         Select-Object -First 1 -ExpandProperty FullName
+          if (-not $releasePath) { throw "No Release folder with EXE found" }
+
+          $outputPortable = "./output/windows-nosetup"
+          $outputSetup    = "./output/windows-setup"
+          New-Item -ItemType Directory -Path $outputPortable -Force | Out-Null
+          New-Item -ItemType Directory -Path $outputSetup -Force | Out-Null
+
+          Copy-Item -Path "$releasePath\*" -Destination $outputPortable -Recurse
+
+          fastforge release --name dev --jobs windows-exe
+
+          if (-not (Test-Path "dist")) { throw "Installer output folder 'dist' not found" }
+          Copy-Item -Path "dist\*" -Destination $outputSetup -Recurse
+
+          Write-Host "Build complete. Portable in $outputPortable, Installer in $outputSetup"
+
+      - name: Upload Windows Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-artifacts
+          path: output/
+
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Install Flutter Dependencies
+        run: flutter pub get
+
+      - name: Update Version in pubspec.yaml and configuration.dart with Git Hash
+        run: |
+          git_hash=$(git rev-parse --short=7 HEAD)
+          echo "Using Git hash: $git_hash"
+
+          pubspec_path="./pubspec.yaml"
+          dart_file_path="./lib/ui/configuration.dart"
+
+          old_version=$(grep '^version:' "$pubspec_path" | sed 's/^version:[[:space:]]*//')
+          echo "Old pubspec version: $old_version"
+
+          sed -i.bak -E "s/^(version:[[:space:]]*[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9]+)?\+)[a-zA-Z0-9]+/\1$git_hash/" "$pubspec_path"
+          rm "$pubspec_path.bak"
+
+          new_version=$(grep '^version:' "$pubspec_path" | sed 's/^version:[[:space:]]*//')
+          echo "Updated pubspec version: $new_version"
+
+          base_version=$(echo "$new_version" | cut -d'+' -f1)
+
+          sed -i.bak -E "s/static const String version = \".*\";/static const String version = \"$base_version+$git_hash\";/" "$dart_file_path"
+          rm "$dart_file_path.bak"
+
+          echo "Updated Dart version: $base_version+$git_hash"
+
+      - name: Build Android APKs
+        run: |
+          gradle_file="android/app/build.gradle"
+          mkdir -p ./output
+
+          flutter build apk --release
+          mv build/app/outputs/flutter-apk/app-release.apk ./output/app-universal-release.apk
+
+          perl -0777 -pe 's/ndk\s*\{[^}]*abiFilters[^}]*\}//g' "$gradle_file" > "$gradle_file.tmp" && mv "$gradle_file.tmp" "$gradle_file"
+
+          flutter build apk --release --split-per-abi
+          mv build/app/outputs/flutter-apk/*.apk ./output/
+
+      - name: Upload Android Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-artifacts
+          path: output/
