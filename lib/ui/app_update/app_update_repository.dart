@@ -20,7 +20,13 @@ class AppUpdateRepository {
     try {
 
       if (AppConfiguration.version.contains("+")) {
-        logger.i("[AppUpdate] Skipping update check for git-hash build: ${AppConfiguration.version}");
+        logger.i("[AppUpdate] Skipping update check for artifacts: ${AppConfiguration.version}");
+
+        if (!context.mounted) return;
+        if (showToast) {
+          AppLocalizations localizations = AppLocalizations.of(context)!;
+          CustomToast.error(localizations.appUpdateNotAvailableMsg).show(context);
+        }
         return;
       }
 

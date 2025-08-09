@@ -193,16 +193,16 @@ class HttpBodyState extends State<HttpBodyWidget> {
           onPressed: showRequestRewrite));
     }
 
-    list.add(const SizedBox(width: 3));
-    list.add(IconButton(
-        icon: const Icon(Icons.text_format, size: 21),
-        tooltip: localizations.encode,
-        onPressed: () async {
-          var body = await bodyKey.currentState?.getBody();
-          if (mounted) {
-            encodeWindow(EncoderType.base64, context, body);
-          }
-        }));
+    // list.add(const SizedBox(width: 3));
+    // list.add(IconButton(
+    //     icon: const Icon(Icons.text_format, size: 21),
+    //     tooltip: localizations.encode,
+    //     onPressed: () async {
+    //       var body = await bodyKey.currentState?.getBody();
+    //       if (mounted) {
+    //         encodeWindow(EncoderType.base64, context, body);
+    //       }
+    //     }));
     if (!inNewWindow) {
       list.add(const SizedBox(width: 3));
       list.add(IconButton(
@@ -352,7 +352,11 @@ class _BodyState extends State<_Body> {
     }
 
     if (viewType == ViewType.hex) {
-      return message!.body!.map(intToHex).join(" ");
+      return (await message!.decodeBody()).map(intToHex).join(" ");
+    }
+
+    if (viewType == ViewType.base64) {
+      return base64.encode(await message!.decodeBody());
     }
 
     try {
@@ -408,12 +412,28 @@ class _BodyState extends State<_Body> {
     if (type == ViewType.video) {
       return const Center(child: Text("video not support preview"));
     }
-    if (type == ViewType.hex) {
-      return SelectableText(message!.body!.map(intToHex).join(" "), contextMenuBuilder: contextMenu);
-    }
-
     if (type == ViewType.formUrl) {
       return SelectableText(Uri.decodeFull(message!.getBodyString()), contextMenuBuilder: contextMenu);
+    }
+
+    if (type == ViewType.hex) {
+      return futureWidget(
+        message!.decodeBody(),
+        initialData: message!.body ?? [],
+        (body) {
+          return SelectableText(body.map(intToHex).join(" "), contextMenuBuilder: contextMenu);
+        },
+     );
+    }
+
+    if (type == ViewType.base64) {
+      return futureWidget(
+        message!.decodeBody(),
+        initialData: message!.body ?? [],
+        (body) {
+          return SelectableText(base64.encode(body), contextMenuBuilder: contextMenu);
+        },
+      );
     }
 
     return futureWidget(message!.decodeBodyString(), initialData: message!.getBodyString(), (body) {
@@ -471,6 +491,7 @@ class Tabs {
     }
 
     tabs.list.add(ViewType.hex);
+    tabs.list.add(ViewType.base64);
     return tabs;
   }
 
@@ -490,6 +511,7 @@ enum ViewType {
   css("CSS"),
   js("JavaScript"),
   hex("Hex"),
+  base64("Base64"),
   ;
 
   final String title;
