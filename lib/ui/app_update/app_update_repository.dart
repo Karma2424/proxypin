@@ -18,6 +18,11 @@ class AppUpdateRepository {
 
   static Future<void> checkUpdate(BuildContext context, {bool canIgnore = true, bool showToast = false}) async {
     try {
+
+      if (AppConfiguration.version.contains("+")) {
+        logger.i("[AppUpdate] Update check for artifacts: ${AppConfiguration.version}");
+      }
+
       var lastVersion = await getLatestVersion();
       if (lastVersion == null) {
         logger.w("[AppUpdate] failed to fetch latest version info");
@@ -88,6 +93,7 @@ class AppUpdateRepository {
     }
 
     List<int> parseVersion(String version) {
+      version = version.contains("+") ? version.split("+").first : version;
       return normalizeVersion(version).split('.').map(int.parse).toList();
     }
 
