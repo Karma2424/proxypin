@@ -101,6 +101,7 @@ class _SocketLaunchState extends State<SocketLaunch> with WindowListener, Widget
     await windowManager.destroy();
 
     await SystemNavigator.pop();
+    await logger.close();
     exit(0);
   }
 

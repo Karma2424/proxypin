@@ -37,6 +37,7 @@ import 'network/util/logger.dart';
 ///@author wanghongen
 void main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+  await initLogger();
 
   //多窗口
   if (args.firstOrNull == 'multi_window') {
